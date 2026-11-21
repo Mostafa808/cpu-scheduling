@@ -2,7 +2,6 @@ public class TimeStep {
     private final int time;
     private final String kind, cpuActivity, tier1Snapshot, tier2Snapshot, event;
 
-    // A TimeStep describes the CPU activity during [time, time + 1).
     public TimeStep(int time, String kind, String cpu, String tier1, String tier2, String event) {
         if (time < 0) {
             throw new IllegalArgumentException("Time must be non-negative");
