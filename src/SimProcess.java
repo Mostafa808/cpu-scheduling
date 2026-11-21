@@ -15,7 +15,6 @@ public class SimProcess {
         this.remainingTime = burst;
     }
 
-    // Each scheduling algorithm needs its own fresh execution state.
     public SimProcess copy() {
         return new SimProcess(id, arrivalTime, burstTime, initialPriority);
     }
@@ -38,7 +37,6 @@ public class SimProcess {
         remainingTime--;
     }
 
-    // Called at the END of the last executed unit: e.g., RUN [2,3) => finish(3).
     public void finish(int time) {
         if (completionTime != -1 || remainingTime != 0 || firstStartTime == -1) {
             throw new IllegalStateException("Process must finish execution exactly once");
@@ -49,7 +47,6 @@ public class SimProcess {
         completionTime = time;
     }
 
-    // Called by PriorityTier.add() when an unfinished job leaves Tier 1.
     public void enterTier2(int time) {
         if (tier2EntryTime != -1 || firstStartTime == -1 || remainingTime == 0 ||
                 remainingTime == burstTime || completionTime != -1 ||
