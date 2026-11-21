@@ -20,7 +20,6 @@ public class SimulationResult {
             }
         }
         this.algorithmName = name;
-        // Keep the SAME process objects that a scheduler updates; copy only the list.
         this.processes = new ArrayList<>(processes);
     }
 
@@ -75,7 +74,6 @@ public class SimulationResult {
         if (steps.size() != lastCompletion || runSteps != totalBurst) {
             throw new IllegalStateException("Time-step log does not match completed CPU work");
         }
-        // CS and IDLE count toward elapsed time, not useful CPU execution.
         return 100.0 * runSteps / steps.size();
     }
 
