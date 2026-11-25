@@ -60,24 +60,30 @@ public class SimulationResult {
     }
 
     public double cpuUtilization() {
-        requireCompleted();
-        if (steps.isEmpty()) {
-            throw new IllegalStateException("CPU utilization requires a completed time-step log");
+
+        if (steps.size() < 2) {
+            return 0.0;
         }
-        int lastCompletion = 0;
-        long totalBurst = 0;
-        for (SimProcess p : processes) {
-            lastCompletion = Math.max(lastCompletion, p.getCompletionTime());
-            totalBurst += p.getBurstTime();
+
+        TimeStep last = steps.get(steps.size() - 1);
+        if (!"IDLE".equals(last.getKind())) {
+            throw new IllegalStateException("Last step must be the terminating IDLE marker");
         }
-        int runSteps = 0;
-        for (TimeStep step : steps) {
-            if ("RUN".equals(step.getKind())) runSteps++;
+        
+        long runTime = 0;
+        long totalTime = 0;
+        for (int i = 0; i < steps.size() - 1; i++) {
+            TimeStep current = steps.get(i);
+            TimeStep next = steps.get(i + 1);
+
+            int duration = next.getTime() - current.getTime();
+            totalTime += duration;
+            if ("RUN".equals(current.getKind())) {
+                runTime += duration;
+            }
         }
-        if (steps.size() != lastCompletion || runSteps != totalBurst) {
-            throw new IllegalStateException("Time-step log does not match completed CPU work");
-        }
-        return 100.0 * runSteps / steps.size();
+        
+        return totalTime == 0 ? 0.0: ((double) runTime * 100.0 / totalTime);
     }
 
     public String getAlgorithmName() { return algorithmName; }

@@ -3,138 +3,152 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.PriorityQueue;
 
-/**
- * ACS – Aging + Context-Switch Priority Scheduler
- *
- * Two-tier model:
- *   Tier-1 (ready queue) : Round-Robin with a fixed quantum, sorted by initial priority.
- *   Tier-2 (waiting queue): Processes demoted after their quantum expires. Aging boosts
- *                            their effective priority every {@code agingInterval} time units.
- *
- * A process starts in Tier-1. After using its full quantum without finishing,
- * it moves to Tier-2. When Tier-1 is empty, the best process from Tier-2 is promoted.
- */
 public class ACSScheduler {
 
-    public static SimulationResult run(List<SimProcess> processes, int quantum,
-                                       int cs, int agingInterval) {
-        // Work on copies so the originals remain pristine
+    public static SimulationResult run(List<SimProcess> processes, int quantum, int cs, int agingInterval) {
+
         List<SimProcess> copies = new ArrayList<>();
-        for (SimProcess p : processes) copies.add(p.copy());
+
+        for (SimProcess p : processes) {
+            copies.add(p.copy());
+        }
 
         SimulationResult result = new SimulationResult("ACSScheduler", copies);
-
-        // Arrival queue – ordered by arrival time
-        PriorityQueue<SimProcess> arrivalQueue =
-                new PriorityQueue<>(new SimProcess.DefaultComparator());
+        PriorityQueue<SimProcess> arrivalQueue = new PriorityQueue<>(new SimProcess.DefaultComparator());
+        
         arrivalQueue.addAll(copies);
-
-        // Tier-1: simple FIFO (priority preserved by insertion order at arrival)
         LinkedList<SimProcess> tier1 = new LinkedList<>();
-
-        // Tier-2: aging priority queue
         PriorityTier tier2 = new PriorityTier(agingInterval);
-
         List<SimProcess> finished = new ArrayList<>();
-
-        int time          = 0;
-        int quantumLeft   = 0;
+        
+        int time = 0;
+        int quantumLeft = 0;
         boolean switching = false;
-        int switchLeft    = 0;
+        int switchLeft = 0;
+        boolean runningFromTier2 = false;
         SimProcess current = null;
-        TimeStep lastStep  = null;
-
+        TimeStep lastStep = null;
         while (finished.size() < copies.size()) {
-
-            // --- arrivals ---
+            /*
+             * ARRIVALS
+             */
+            boolean arrivalOccurred = false;
             while (!arrivalQueue.isEmpty() && arrivalQueue.peek().getArrivalTime() == time) {
                 tier1.add(arrivalQueue.poll());
+                arrivalOccurred = true;
             }
 
-            // --- CPU cycle ---
+            /*
+             * Tier-2 preemption by Tier-1 arrivals.
+             */
+            if (arrivalOccurred && runningFromTier2 && current != null) {
+                tier2.requeuePreempted(current);
+                current = null;
+                runningFromTier2 = false;
+
+                if (cs > 0) {
+                    switching = true;
+                    switchLeft = cs;
+                }
+            }
+
+            /*
+             * CPU CYCLE
+             */
             if (switching) {
                 switchLeft--;
             } else if (current != null) {
                 current.executeOneUnit();
-                quantumLeft--;
+                if (!runningFromTier2) {
+                    quantumLeft--;
+                }
             }
 
-            // --- process finished? ---
+            /*
+             * FINISHED
+             */
             if (current != null && current.getRemainingTime() == 0) {
                 current.finish(time);
                 finished.add(current);
+                
                 current = null;
                 quantumLeft = 0;
+                runningFromTier2 = false;
             }
 
-            // --- context-switch finished? ---
+            /*
+             * CONTEXT SWITCH FINISHED
+             */
             if (switching && switchLeft == 0) {
                 switching = false;
             }
 
+            /*
+             * DURING CONTEXT SWITCH
+             */
             if (switching) {
-                // record CS step
-                String snap1 = snapshotTier1(tier1);
-                String snap2 = tier2.snapshot(time);
-                lastStep = new TimeStep(time, "CS",
-                        (current != null ? current.getId() : ""),
-                        snap1, snap2, "context switching");
+                lastStep = new TimeStep(time, "CS", null, snapshot(current, tier1, time), tier2.snapshot(time), "context switching");
                 result.addStep(lastStep);
                 time++;
                 continue;
             }
 
-            // --- quantum expired => demote to Tier-2 ---
-            if (current != null && quantumLeft == 0) {
+            /*
+             * QUANTUM EXPIRATION
+             */
+            if (current != null && !runningFromTier2 && quantumLeft == 0) {
                 tier2.add(current, time);
                 current = null;
             }
 
-            // --- pick next process ---
+            /*
+             * DISPATCH
+             */
             if (current == null) {
                 SimProcess next = null;
+                boolean nextFromTier2 = false;
 
                 if (!tier1.isEmpty()) {
                     next = tier1.poll();
                 } else if (!tier2.isEmpty()) {
                     next = tier2.chooseNext(time);
-                    tier2.getQueue().remove(next);
+                    tier2.remove(next);
+                    nextFromTier2 = true;
                 }
 
                 if (next != null) {
-                    if (cs > 0 && lastStep != null &&
-                            !"IDLE".equals(lastStep.getKind()) &&
-                            !"CS".equals(lastStep.getKind())) {
-                        // insert context-switch delay
-                        switching   = true;
-                        switchLeft  = cs;
-                        quantumLeft = quantum;
-                        current     = next;
-                        String snap1 = snapshotTier1(tier1);
-                        String snap2 = tier2.snapshot(time);
-                        lastStep = new TimeStep(time, "CS", next.getId(),
-                                snap1, snap2, "switching to " + next.getId());
+                    if (cs > 0 && lastStep != null && !"CS".equals(lastStep.getKind()) && !"IDLE".equals(lastStep.getKind())) {
+                        switching = true;
+                        switchLeft = cs;
+
+                        current = next;
+                        runningFromTier2 = nextFromTier2;
+
+                        quantumLeft = nextFromTier2 ? -1: quantum;
+                        lastStep = new TimeStep(time, "CS", next.getId(), snapshot(current, tier1, time), tier2.snapshot(time), "switching to " + next.getId());
                         result.addStep(lastStep);
+
                         time++;
                         continue;
-                    } else {
-                        current     = next;
-                        quantumLeft = quantum;
                     }
+
+                    current = next;
+                    
+                    runningFromTier2 = nextFromTier2;
+                    quantumLeft = nextFromTier2 ? -1: quantum;
                 }
             }
 
-            // --- record time step ---
-            String snap1 = snapshotTier1(tier1);
-            String snap2 = tier2.snapshot(time);
-
+            /*
+             * LOG STEP
+             */
             if (current != null) {
                 current.startIfFirst(time);
-                lastStep = new TimeStep(time, "RUN", current.getId(),
-                        snap1, snap2, current.getId() + " running");
+                lastStep = new TimeStep(time, "RUN", current.getId(), snapshot(current, tier1, time), tier2.snapshot(time), current.getId() + " running " + "(remaining=" + current.getRemainingTime() + ")");
             } else {
-                lastStep = new TimeStep(time, "IDLE", null, snap1, snap2, "cpu idle");
+                lastStep = new TimeStep(time, "IDLE", null, snapshot(null, tier1, time), tier2.snapshot(time), "CPU idle");
             }
+
             result.addStep(lastStep);
             time++;
         }
@@ -142,14 +156,32 @@ public class ACSScheduler {
         return result;
     }
 
-    private static String snapshotTier1(LinkedList<SimProcess> tier1) {
-        if (tier1.isEmpty()) return "tier1:[]";
-        StringBuilder sb = new StringBuilder("tier1:[");
-        for (SimProcess p : tier1) {
-            sb.append(p.getId())
-              .append("(rem:").append(p.getRemainingTime()).append("), ");
+    private static String snapshot(SimProcess current, LinkedList<SimProcess> tier1, int time) {
+        
+        StringBuilder sb = new StringBuilder();
+        sb.append("active process: ");
+        if (current != null) {
+            sb.append(current.getId()).append("(remaining:").append(current.getRemainingTime()).append(")");
+        } else {
+            sb.append("none");
         }
-        sb.setLength(sb.length() - 2);
+        sb.append("; ");
+        sb.append(snapshotTier1(tier1));
+        sb.append("; ");
+        return sb.toString();
+    }
+
+    private static String snapshotTier1(LinkedList<SimProcess> tier1) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("tier1:[");
+
+        for (SimProcess p : tier1) {
+            sb.append(p.getId()).append("(remaining:").append(p.getRemainingTime()).append(", priority:").append(p.getCurrentPriority()).append("), ");
+        }
+
+        if (!tier1.isEmpty()) {
+            sb.setLength(sb.length() - 2);
+        }
         sb.append("]");
         return sb.toString();
     }
