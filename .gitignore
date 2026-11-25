@@ -2,3 +2,6 @@
 README.md
 .vscode/
 bin/
+
+# compiled Java bytecode
+*.class
